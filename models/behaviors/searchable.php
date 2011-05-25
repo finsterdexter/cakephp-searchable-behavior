@@ -3,8 +3,8 @@ class SearchableBehavior extends ModelBehavior {
 	var $settings = array();
 	var $model = null;
 	
-	var $_index = false;
-	var $foreignKey = false;
+	var $_index = array();
+	var $foreignKey = 0;
 	var $_defaults = array(
 		'rebuildOnUpdate' => true
 	);
@@ -14,71 +14,72 @@ class SearchableBehavior extends ModelBehavior {
 	function setup(&$model, $settings = array()) {
 		$settings = array_merge($this->_defaults, $settings);	
 		$this->settings[$model->name] = $settings;
-		$this->model = &$model;
+		$this->index[$model->name] = false;
 	}
 	
-	function _indexData() {
-		if (method_exists($this->model, 'indexData')) {
-			return $this->model->indexData();
+	function _indexData(&$model) {
+		if (method_exists($model, 'indexData')) {
+			return $model->indexData();
 		} else {
-			return $this->_index();
+			return $this->_index($model);
 		}
 	}
 	
-	function beforeSave() {
-		if ($this->model->id) {
-			$this->foreignKey = $this->model->id;		
+	function beforeSave(&$model) {
+		if ($model->id) {
+			$this->foreignKey = $model->id;		
 		} else {
 			$this->foreignKey = 0;
 		}
-		if ($this->foreignKey == 0 || $this->settings[$this->model->name]['rebuildOnUpdate']) {
-			$this->_index = $this->_indexData();
+		if ($this->foreignKey == 0 || $this->settings[$model->name]['rebuildOnUpdate']) {
+			$this->_index[$model->name] = $this->_indexData($model);
 		}
 		return true;
 	}
 	
-	function afterSave() {
-		if ($this->_index !== false) {
+	function afterSave(&$model) {
+		if ($this->_index[$model->name] !== false) {
 			if (!$this->SearchIndex) {
 				$this->SearchIndex = ClassRegistry::init('SearchIndex');
 			}
 			if ($this->foreignKey == 0) {
-				$this->foreignKey = $this->model->getLastInsertID();
+				$this->foreignKey = $model->getLastInsertID();
+				$this->SearchIndex->create();
 				$this->SearchIndex->save(
 					array(
 						'SearchIndex' => array(
-							'model' => $this->model->name,
+							'model' => $model->name,
 							'association_key' => $this->foreignKey,
-							'data' => $this->_index
+							'data' => $this->_index[$model->name]
 						)
 					)
 				);
 			} else {
-				$searchEntry = $this->SearchIndex->find('first',array('fields'=>array('id'),'conditions'=>array('model'=>$this->model->name,'association_key'=>$this->foreignKey)));
+				$searchEntry = $this->SearchIndex->find('first',array('fields'=>array('id'),'conditions'=>array('model'=>$model->name,'association_key'=>$this->foreignKey)));
 				$this->SearchIndex->save(
 					array(
 						'SearchIndex' => array(
 							'id' => empty($searchEntry) ? 0 : $searchEntry['SearchIndex']['id'],
-							'model' => $this->model->name,
+							'model' => $model->name,
 							'association_key' => $this->foreignKey,
-							'data' => $this->_index
+							'data' => $this->_index[$model->name]
 						)
 					)
 				);				
 			}
-			$this->_index = false;
+			$this->_index[$model->name] = false;
 			$this->foreignKey = false;
 		}
 		return true;
 	}
 	
-	function _index() {
+	function _index(&$model) {
 		$index = array();
-		$data = $this->model->data[$this->model->name];
+		$data = $model->data[$model->name];
 		foreach ($data as $key => $value) {
 			if (is_string($value)) {
-				$columns = $this->model->getColumnTypes();
-				if ($key != $this->model->primaryKey && isset($columns[$key]) && in_array($columns[$key],array('text','varchar','char','string'))) {
+				$columns = $model->getColumnTypes();
+				if ($key != $model->primaryKey && isset($columns[$key]) && in_array($columns[$key],array('text','varchar','char','string'))) {
 					$index []= strip_tags(html_entity_decode($value,ENT_COMPAT,'UTF-8'));
 				}
 			}
